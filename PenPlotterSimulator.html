@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>平行リンク式ペンプロッタ 2Dシミュレータ</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #f0f2f5;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    color: #222;
+    touch-action: manipulation;
+  }
+  .app {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 12px;
+  }
+  h1 {
+    font-size: 1.05rem;
+    text-align: center;
+    margin: 8px 0 12px;
+    color: #333;
+  }
+  .panel {
+    background: #fff;
+    border-radius: 12px;
+    padding: 12px 16px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+    margin-bottom: 12px;
+  }
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+  }
+  .controls .row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1 1 auto;
+    min-width: 220px;
+  }
+  .controls label {
+    font-size: 0.9rem;
+    white-space: nowrap;
+    color: #444;
+  }
+  .controls input[type=range] {
+    flex: 1;
+    accent-color: #2266cc;
+  }
+  .controls .lval {
+    width: 3.6em;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.9rem;
+    color: #333;
+  }
+  button#resetBtn {
+    background: #2266cc;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  button#resetBtn:active {
+    background: #184c99;
+  }
+  .canvas-wrap {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+    overflow: hidden;
+    touch-action: none;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    background: #ffffff;
+  }
+  .info {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px 16px;
+    font-size: 0.92rem;
+  }
+  .info .item {
+    display: flex;
+    justify-content: space-between;
+    background: #f7f8fa;
+    border-radius: 8px;
+    padding: 6px 10px;
+  }
+  .info .item span.k {
+    color: #666;
+  }
+  .info .item span.v {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    color: #1a1a1a;
+  }
+  .legend {
+    font-size: 0.78rem;
+    color: #777;
+    text-align: center;
+    margin-top: 4px;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>平行リンク（ひし形リンク）式ペンプロッタ 2Dシミュレータ</h1>
+
+  <div class="panel">
+    <div class="controls">
+      <div class="row">
+        <label>バー長さ L</label>
+        <span class="lval" id="lVal">85</span><span style="font-size:0.85rem;color:#666;">mm（固定）</span>
+      </div>
+      <button id="resetBtn">四角の中心に戻す</button>
+    </div>
+  </div>
+
+  <div class="canvas-wrap">
+    <canvas id="cv"></canvas>
+  </div>
+
+  <div class="panel" style="margin-top:12px;">
+    <div class="info">
+      <div class="item"><span class="k">ペン先 x (mm)</span><span class="v" id="xVal">0.0</span></div>
+      <div class="item"><span class="k">ペン先 y (mm)</span><span class="v" id="yVal">120.0</span></div>
+      <div class="item"><span class="k">α（O→A）</span><span class="v" id="alphaVal">45.0°</span></div>
+      <div class="item"><span class="k">β（O→B）</span><span class="v" id="betaVal">135.0°</span></div>
+    </div>
+    <div class="legend">ペン先（赤）をドラッグ／タップで移動できます。オレンジの枠は横向きA7サイズ（105mm×74mm、中心 y=120mm）の描画対象範囲で、ペン先はこの枠内だけを移動できます。薄い円は機構の到達可能範囲（半径 2L）です。</div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  const canvas = document.getElementById('cv');
+  const ctx = canvas.getContext('2d');
+  const lVal = document.getElementById('lVal');
+  const resetBtn = document.getElementById('resetBtn');
+  const xValEl = document.getElementById('xVal');
+  const yValEl = document.getElementById('yVal');
+  const alphaValEl = document.getElementById('alphaVal');
+  const betaValEl = document.getElementById('betaVal');
+
+  // バー長さは A7 横向き（105mm×74mm）用に最適化した固定値
+  const L = 85;
+
+  // 描画対象の四角（横向きA7、中心 (0,120)）
+  const RECT_W = 105;
+  const RECT_H = 74;
+  const RECT_CX = 0;
+  const RECT_CY = 120;
+  const RECT_X_MIN = RECT_CX - RECT_W / 2;
+  const RECT_X_MAX = RECT_CX + RECT_W / 2;
+  const RECT_Y_MIN = RECT_CY - RECT_H / 2;
+  const RECT_Y_MAX = RECT_CY + RECT_H / 2;
+
+  // ペン先の「ワールド座標」（x右,y上、単位mm）。初期位置は四角の中心。
+  let P = { x: RECT_CX, y: RECT_CY };
+
+  let dragging = false;
+  let cssW = 0, cssH = 0, dpr = 1;
+
+  function resizeCanvas(){
+    const rect = canvas.getBoundingClientRect();
+    dpr = window.devicePixelRatio || 1;
+    cssW = rect.width;
+    cssH = rect.height;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw();
+  }
+
+  function getScale(){
+    const margin = 28; // px
+    const halfMin = Math.min(cssW, cssH) / 2 - margin;
+    return Math.max(halfMin, 10) / (2 * L);
+  }
+
+  function worldToScreen(wx, wy){
+    const cx = cssW / 2, cy = cssH / 2;
+    const s = getScale();
+    return { x: cx + wx * s, y: cy - wy * s };
+  }
+
+  function screenToWorld(px, py){
+    const cx = cssW / 2, cy = cssH / 2;
+    const s = getScale();
+    return { x: (px - cx) / s, y: -(py - cy) / s };
+  }
+
+  function clampToReachable(x, y){
+    const maxD = 2 * L;
+    const minD = L * 0.001;
+    let d = Math.sqrt(x * x + y * y);
+    if (d < minD){
+      // 中心付近は特異点になるため、わずかに逃がす
+      return { x: 0, y: minD };
+    }
+    if (d > maxD){
+      const k = maxD / d;
+      return { x: x * k, y: y * k };
+    }
+    return { x: x, y: y };
+  }
+
+  // ペン先の移動範囲を「描画対象の四角（A7）」の内側だけに制限する
+  function clampToRect(x, y){
+    const cx = Math.min(Math.max(x, RECT_X_MIN), RECT_X_MAX);
+    const cy = Math.min(Math.max(y, RECT_Y_MIN), RECT_Y_MAX);
+    return { x: cx, y: cy };
+  }
+
+  function clampPen(x, y){
+    // まず機構として到達可能な範囲に収め、さらに四角の内側に限定する
+    const r1 = clampToReachable(x, y);
+    const r2 = clampToRect(r1.x, r1.y);
+    return r2;
+  }
+
+  // 逆運動学
+  function solveIK(x, y){
+    const d = Math.sqrt(x * x + y * y);
+    const half = d / 2;
+    let inner = L * L - half * half;
+    if (inner < 0) inner = 0; // 数値誤差対策
+    const h = Math.sqrt(inner);
+    const Mx = x / 2, My = y / 2;
+    const nx = -y / d, ny = x / d;
+
+    // n方向の割り当てを、初期姿勢 P=(0, sqrt(2)L) で
+    // alpha=45°, beta=135° となるように決定
+    const A = { x: Mx - h * nx, y: My - h * ny };
+    const B = { x: Mx + h * nx, y: My + h * ny };
+
+    const alpha = Math.atan2(A.y, A.x);
+    const beta = Math.atan2(B.y, B.x);
+
+    return { A, B, alpha, beta };
+  }
+
+  function drawArrowPoint(sx, sy, color, label, r){
+    ctx.beginPath();
+    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#ffffff';
+    ctx.stroke();
+
+    ctx.font = '600 13px -apple-system, sans-serif';
+    ctx.fillStyle = '#222';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, sx, sy - r - 6);
+  }
+
+  function draw(){
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    // 背景（白）
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, cssW, cssH);
+
+    const O = { x: 0, y: 0 };
+    const { A, B, alpha, beta } = solveIK(P.x, P.y);
+
+    const sO = worldToScreen(O.x, O.y);
+    const sA = worldToScreen(A.x, A.y);
+    const sB = worldToScreen(B.x, B.y);
+    const sP = worldToScreen(P.x, P.y);
+
+    // 到達可能範囲の円（半径2L）
+    const s = getScale();
+    ctx.beginPath();
+    ctx.arc(sO.x, sO.y, 2 * L * s, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([6, 6]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // 軸（薄く）
+    ctx.strokeStyle = 'rgba(0,0,0,0.08)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, sO.y); ctx.lineTo(cssW, sO.y);
+    ctx.moveTo(sO.x, 0); ctx.lineTo(sO.x, cssH);
+    ctx.stroke();
+
+    // 描画対象の四角（横向きA7、ペン先の可動範囲）
+    const rTL = worldToScreen(RECT_X_MIN, RECT_Y_MAX);
+    const rBR = worldToScreen(RECT_X_MAX, RECT_Y_MIN);
+    ctx.strokeStyle = '#f08c00';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 4]);
+    ctx.strokeRect(rTL.x, rTL.y, rBR.x - rTL.x, rBR.y - rTL.y);
+    ctx.setLineDash([]);
+
+    // バー O-A-P（青系）
+    ctx.lineWidth = Math.max(6, 8 * (s / 1));
+    ctx.lineWidth = 7;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#2266cc';
+    ctx.beginPath();
+    ctx.moveTo(sO.x, sO.y);
+    ctx.lineTo(sA.x, sA.y);
+    ctx.lineTo(sP.x, sP.y);
+    ctx.stroke();
+
+    // バー O-B-P（緑系）
+    ctx.strokeStyle = '#1a9e6b';
+    ctx.beginPath();
+    ctx.moveTo(sO.x, sO.y);
+    ctx.lineTo(sB.x, sB.y);
+    ctx.lineTo(sP.x, sP.y);
+    ctx.stroke();
+
+    // 関節点
+    drawArrowPoint(sO.x, sO.y, '#333333', 'O', 6);
+    drawArrowPoint(sA.x, sA.y, '#2266cc', 'A', 6);
+    drawArrowPoint(sB.x, sB.y, '#1a9e6b', 'B', 6);
+    drawArrowPoint(sP.x, sP.y, '#e03131', 'P', 8);
+
+    // 情報表示更新
+    xValEl.textContent = P.x.toFixed(1);
+    yValEl.textContent = P.y.toFixed(1);
+    alphaValEl.textContent = (alpha * 180 / Math.PI).toFixed(1) + '°';
+    betaValEl.textContent = (beta * 180 / Math.PI).toFixed(1) + '°';
+  }
+
+  function setPenFromScreen(px, py){
+    const w = screenToWorld(px, py);
+    P = clampPen(w.x, w.y);
+    draw();
+  }
+
+  function getLocalPos(evt){
+    const rect = canvas.getBoundingClientRect();
+    let clientX, clientY;
+    if (evt.touches && evt.touches.length > 0){
+      clientX = evt.touches[0].clientX;
+      clientY = evt.touches[0].clientY;
+    } else {
+      clientX = evt.clientX;
+      clientY = evt.clientY;
+    }
+    return { x: clientX - rect.left, y: clientY - rect.top };
+  }
+
+  // Pointer Events（マウス・タッチ・ペン統一対応）
+  function onPointerDown(evt){
+    evt.preventDefault();
+    dragging = true;
+    if (canvas.setPointerCapture && evt.pointerId !== undefined){
+      try { canvas.setPointerCapture(evt.pointerId); } catch(e){}
+    }
+    const pos = getLocalPos(evt);
+    setPenFromScreen(pos.x, pos.y);
+  }
+  function onPointerMove(evt){
+    if (!dragging) return;
+    evt.preventDefault();
+    const pos = getLocalPos(evt);
+    setPenFromScreen(pos.x, pos.y);
+  }
+  function onPointerUp(evt){
+    dragging = false;
+  }
+
+  if (window.PointerEvent){
+    canvas.addEventListener('pointerdown', onPointerDown);
+    canvas.addEventListener('pointermove', onPointerMove);
+    canvas.addEventListener('pointerup', onPointerUp);
+    canvas.addEventListener('pointercancel', onPointerUp);
+  } else {
+    // フォールバック（古いブラウザ向け）
+    canvas.addEventListener('mousedown', onPointerDown);
+    canvas.addEventListener('mousemove', onPointerMove);
+    window.addEventListener('mouseup', onPointerUp);
+    canvas.addEventListener('touchstart', onPointerDown, { passive: false });
+    canvas.addEventListener('touchmove', onPointerMove, { passive: false });
+    canvas.addEventListener('touchend', onPointerUp);
+    canvas.addEventListener('touchcancel', onPointerUp);
+  }
+
+  resetBtn.addEventListener('click', function(){
+    P = { x: RECT_CX, y: RECT_CY };
+    draw();
+  });
+
+  window.addEventListener('resize', resizeCanvas);
+
+  // 初期化
+  lVal.textContent = L.toFixed(0);
+  resizeCanvas();
+})();
+</script>
+</body>
+</html>
